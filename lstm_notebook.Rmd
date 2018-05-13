@@ -1,6 +1,8 @@
 ---
 title: "Recreating the LSTM in R"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 Because R is my native language, I redo the LSTM stuff in R
