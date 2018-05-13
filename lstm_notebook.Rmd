@@ -1,0 +1,140 @@
+---
+title: "Recreating the LSTM in R"
+output: html_notebook
+---
+
+Because R is my native language, I redo the LSTM stuff in R
+
+Import Keras:
+
+```{r}
+library(keras)
+```
+
+Set parameters:
+
+```{r}
+x_max = 20000
+split_fraction = 0.8
+
+# Number of elements pulled out of the time series for test and train data
+num_samples = 1000
+
+# Lengths of vectors for training and testing
+delta_T = 500
+
+# Define the time series as a list
+deflist = list(sines = list(sin1 = list(omega = 2*pi/25, amp = 0.2),
+														sin2 = list(omega = 2*pi/500, amp = 2),
+														sin3 = list(omega = 2*pi/5000, amp = 10)),
+							 noise = 0.1)
+```
+
+Build the time series.
+
+```{r}
+t = seq(0, x_max)
+y = rep(0, length(t))
+
+for (element in deflist$sines) {
+	y = y + element$amp * sin(element$omega * t)
+}
+y = y + rnorm(n = length(t), mean = 0, sd = deflist$noise)
+
+plot(t, y, type = "l", lwd = 2, col = "blue")
+```
+
+To do the transformation, get min and max of time series and substract min and
+divide by difference
+
+```{r}
+min_y = min(y)
+max_y = max(y)
+
+y = (y - min_y)/(max_y - min_y)
+```
+
+For generating training and test data I chose another path. Instead of making
+the first 16000 elements of the time series the training data and the rest the
+test data, I pick `num_samples` vectors of length `delta_T + 1` out of the time
+series and use the last element as the target, the rest for training or
+predicting the target. The way to do this is pure idiomatic R :)
+
+```{r}
+idcs_mat = t(sapply(sample(seq(1, (x_max - delta_T - 2)), num_samples, TRUE),
+										seq, length = delta_T + 1))
+
+dim(idcs_mat)
+```
+
+`num_samples` rows and `delta_T + 1` columns. Each row contains the numerical 
+indices of a sample from the time series. The last column is the index of the
+target and gets extracted as a vector to define the targets:
+
+```{r}
+idcs_y = idcs_mat[, delta_T + 1] # extract last column
+```
+
+Sample the rows of `idcs_mat` to use for training:
+
+```{r}
+idcs_train = sample(x = 1:num_samples,
+										size = round(num_samples*split_fraction),
+										replace = FALSE)
+```
+
+Generate matrices that hold the samples from the time series
+
+```{r}
+x_train = t(apply(idcs_mat[idcs_train, seq(1, delta_T, by = 1)], 1, function(zeile) y[zeile]))
+y_train = y[idcs_y[idcs_train]]
+
+x_test = t(apply(idcs_mat[-idcs_train, seq(1, delta_T, by = 1)], 1, function(zeile) y[zeile]))
+y_test = y[idcs_y[-idcs_train]]
+
+x_train[1:10, 1:5]
+```
+
+Again, each row contains one training example. However, to make the LSTM 
+understand the data, it has to be transformed. In general, the data that goes
+into a Keras LSTM has to be in a three-dimensional array. The first dimension
+is the sample, the second dimensio is the time series, the third dimension 
+is the number of the input. We have a 1D time series, so our third dimension has
+length one:
+
+```{r}
+# It is easier to just add the third dimension to the existing ones.
+dim(x_train) = c(dim(x_train), 1)
+dim(x_test) = c(dim(x_test), 1)
+```
+
+Now, we define the model:
+
+```{r}
+model = keras_model_sequential()
+layer_lstm(object = model, units = 100, input_shape = c(delta_T, 1))
+layer_dense(object = model, units = 1, activation = 'sigmoid')
+
+compile(object = model, loss = "mean_squared_error", optimizer = "adam",
+				metrics = "mae" )
+```
+
+Fitting the model for 10 epochs:
+
+```{r}
+fit(object = model, x = x_train, y = y_train, batch_size = 40, epochs = 10,
+		validation_data = list(x_test, y_test))
+```
+
+Testing the output by plotting target versus predicted value:
+
+```{r}
+preds = predict(model, x = x_test)
+plot(y_test, preds)
+```
+
+Looks good.
+
+
+
+
